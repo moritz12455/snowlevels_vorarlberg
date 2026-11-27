@@ -1,16 +1,19 @@
-// Dünne Schicht über das Go-Backend.
-const BASE = import.meta.env.VITE_API_BASE || ''
+// Datenzugriff: holt alles direkt von GeoSphere Austria und Open-Meteo (beide erlauben
+// Abfragen aus dem Browser) – ein eigenes Backend ist nicht nötig.
+import { mapData } from './data/map.js'
+import { snowStations, stationData } from './data/stations.js'
+import { checkAbort } from './data/util.js'
 
-async function get(path, signal) {
-  const res = await fetch(BASE + path, { signal })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`)
-  return body
+// Gemeinsam genutzte Abfragen werden nicht abgebrochen; ein abgebrochener Aufrufer
+// bekommt nur das Ergebnis nicht mehr.
+const withSignal = async (promise, signal) => {
+  const v = await promise
+  checkAbort(signal)
+  return v
 }
 
-export const fetchStations = (signal) => get('/api/stations', signal)
+export const fetchStations = (signal) => withSignal(snowStations(), signal)
 
-export const fetchStationData = (id, range, signal) =>
-  get(`/api/stations/${encodeURIComponent(id)}/data?range=${range}`, signal)
+export const fetchStationData = (id, range, signal) => withSignal(stationData(id, range), signal)
 
-export const fetchMap = (signal) => get('/api/map', signal)
+export const fetchMap = (signal) => withSignal(mapData(), signal)

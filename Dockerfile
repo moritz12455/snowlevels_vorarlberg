@@ -1,22 +1,12 @@
 # --- Frontend bauen ---
-FROM node:22-alpine AS web
-WORKDIR /web
+FROM node:22-alpine AS build
+WORKDIR /app
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-# --- Backend bauen ---
-FROM golang:1.24-alpine AS api
-WORKDIR /src
-COPY backend/ ./
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /schneehoehe-api .
-
-# --- Laufzeit ---
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata
-COPY --from=api /schneehoehe-api /app/schneehoehe-api
-COPY --from=web /web/dist /app/web
-ENV STATIC_DIR=/app/web PORT=8080
-EXPOSE 8080
-ENTRYPOINT ["/app/schneehoehe-api"]
+# --- Statisch ausliefern ---
+FROM nginx:1.27-alpine
+COPY --from=build /app/dist /usr/share/nginx/html
+EXPOSE 80
