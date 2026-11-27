@@ -125,7 +125,7 @@ func (c *GeoSphereClient) Timeseries(ctx context.Context, ids []string, params [
 		p := f.Properties.Parameters
 		s := &StationSeries{
 			Times: times,
-			Snow:  p["SCHNEE"].Data,
+			Snow:  clampNonNegative(p["SCHNEE"].Data),
 			Temp:  p["TL"].Data,
 			Wind:  msToKmh(p["FF"].Data),
 			Gust:  msToKmh(p["FFX"].Data),
@@ -133,6 +133,17 @@ func (c *GeoSphereClient) Timeseries(ctx context.Context, ids []string, params [
 		out[id] = s
 	}
 	return out, nil
+}
+
+// clampNonNegative: Schneepegel rauschen bei aperem Boden leicht ins Negative (z. B. −1 cm).
+func clampNonNegative(in []*float64) []*float64 {
+	for i, v := range in {
+		if v != nil && *v < 0 {
+			z := 0.0
+			in[i] = &z
+		}
+	}
+	return in
 }
 
 func msToKmh(in []*float64) []*float64 {

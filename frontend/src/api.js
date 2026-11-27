@@ -12,3 +12,5 @@ export const fetchStations = (signal) => get('/api/stations', signal)
 
 export const fetchStationData = (id, range, signal) =>
   get(`/api/stations/${encodeURIComponent(id)}/data?range=${range}`, signal)
+
+export const fetchMap = (signal) => get('/api/map', signal)

@@ -5,13 +5,14 @@ import RangeSwitch from './components/RangeSwitch.jsx'
 import Kpis from './components/Kpis.jsx'
 import WeatherCharts from './components/WeatherCharts.jsx'
 import DataTable from './components/DataTable.jsx'
+import MapView from './map/MapView.jsx'
 import { full } from './format.js'
 
 const REFRESH_MS = 10 * 60 * 1000
 
 function readUrlState() {
   const p = new URLSearchParams(window.location.search)
-  return { station: p.get('station'), range: p.get('range') || 'week' }
+  return { station: p.get('station'), range: p.get('range') || 'week', view: p.get('view') === 'map' ? 'map' : 'stations' }
 }
 
 export default function App() {
@@ -25,6 +26,13 @@ export default function App() {
   const [error, setError] = useState(null)
   const [aligned, setAligned] = useState(true)
   const [tick, setTick] = useState(0)
+  const [view, setView] = useState(initial.view)
+
+  const openStation = (id) => {
+    setStationId(id)
+    setView('stations')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 
   // Stationen laden
   useEffect(() => {
@@ -40,14 +48,13 @@ export default function App() {
 
   // Auswahl in der URL merken (teilbare Links)
   useEffect(() => {
-    if (!stationId) return
-    const p = new URLSearchParams({ station: stationId, range })
+    const p = new URLSearchParams(view === 'map' ? { view } : stationId ? { station: stationId, range } : {})
     window.history.replaceState(null, '', `${window.location.pathname}?${p}`)
-  }, [stationId, range])
+  }, [stationId, range, view])
 
   // Daten laden + alle 10 Minuten aktualisieren
   useEffect(() => {
-    if (!stationId) return
+    if (!stationId || view !== 'stations') return
     const ctl = new AbortController()
     setLoading(true)
     setError(null)
@@ -56,7 +63,7 @@ export default function App() {
       .catch((e) => e.name !== 'AbortError' && setError(e.message))
       .finally(() => !ctl.signal.aborted && setLoading(false))
     return () => ctl.abort()
-  }, [stationId, range, tick])
+  }, [stationId, range, tick, view])
 
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), REFRESH_MS)
@@ -81,8 +88,18 @@ export default function App() {
               <p className="subtitle">Messung &amp; Prognose an den TAWES-Stationen</p>
             </div>
           </div>
+          <div className="viewswitch" role="tablist" aria-label="Ansicht">
+            <button role="tab" aria-selected={view === 'stations'} className={view === 'stations' ? 'vs active' : 'vs'} onClick={() => setView('stations')}>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 13.5h13M3 11l3.2-4 2.8 2.5L13 4" /></svg>
+              Stationen
+            </button>
+            <button role="tab" aria-selected={view === 'map'} className={view === 'map' ? 'vs active' : 'vs'} onClick={() => setView('map')}>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 3.5l4-1.5 5 2 4-1.5v10l-4 1.5-5-2-4 1.5zM5.5 2v10M10.5 4v10" /></svg>
+              Karte
+            </button>
+          </div>
         </div>
-        {stations && (
+        {stations && view === 'stations' && (
           <StationTabs stations={stations} selected={stationId} onSelect={setStationId} />
         )}
       </header>
@@ -91,7 +108,9 @@ export default function App() {
         {stationsError && <div className="banner error">Stationen konnten nicht geladen werden: {stationsError}</div>}
         {!stations && !stationsError && <div className="placeholder">Stationen werden geladen …</div>}
 
-        {stations && stationId && (
+        {view === 'map' && <MapView onOpenStation={openStation} />}
+
+        {view === 'stations' && stations && stationId && (
           <>
             <div className="toolbar">
               <div className="station-title">

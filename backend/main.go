@@ -7,9 +7,11 @@
 //	GET /api/health
 //	GET /api/stations
 //	GET /api/stations/{id}/data?range=day|week|month
+//	GET /api/map
 package main
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -98,9 +100,14 @@ var ranges = map[string]rangeCfg{
 // ---------- einfacher TTL-Cache ----------
 
 type cacheEntry struct {
-	val any
-	exp time.Time
+	val    any
+	exp    time.Time
+	err    error     // zuletzt aufgetretener Fehler (ohne gültigen Wert)
+	errExp time.Time // bis dahin wird nicht erneut angefragt
 }
+
+// errorTTL: Nach einem Fehler wird die Quelle so lange nicht erneut angefragt (schont Rate-Limits).
+const errorTTL = 90 * time.Second
 
 type Cache struct {
 	mu sync.Mutex
@@ -115,15 +122,26 @@ func (c *Cache) Get(key string, ttl time.Duration, load func() (any, error)) (an
 	c.mu.Lock()
 	e, ok := c.m[key]
 	c.mu.Unlock()
-	if ok && time.Now().Before(e.exp) {
+	hasVal := ok && e.val != nil
+	if hasVal && time.Now().Before(e.exp) {
 		return e.val, nil
+	}
+	if ok && !hasVal && e.err != nil && time.Now().Before(e.errExp) {
+		return nil, e.err
 	}
 	v, err := load()
 	if err != nil {
-		if ok {
+		if hasVal {
 			log.Printf("cache: %s neu laden fehlgeschlagen, verwende alte Daten: %v", key, err)
+			c.mu.Lock()
+			e.exp = time.Now().Add(errorTTL)
+			c.m[key] = e
+			c.mu.Unlock()
 			return e.val, nil
 		}
+		c.mu.Lock()
+		c.m[key] = cacheEntry{err: err, errExp: time.Now().Add(errorTTL)}
+		c.mu.Unlock()
 		return nil, err
 	}
 	c.mu.Lock()
@@ -132,12 +150,19 @@ func (c *Cache) Get(key string, ttl time.Duration, load func() (any, error)) (an
 	return v, nil
 }
 
+func (c *Cache) Delete(key string) {
+	c.mu.Lock()
+	delete(c.m, key)
+	c.mu.Unlock()
+}
+
 // ---------- Server ----------
 
 type Server struct {
-	geo   *GeoSphereClient
-	om    *OpenMeteoClient
-	cache *Cache
+	geo      *GeoSphereClient
+	om       *OpenMeteoClient
+	cache    *Cache
+	boundary *Boundary
 }
 
 func (s *Server) stations(ctx context.Context) ([]Station, error) {
@@ -468,6 +493,28 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
+type gzipWriter struct {
+	http.ResponseWriter
+	gz *gzip.Writer
+}
+
+func (g gzipWriter) Write(b []byte) (int, error) { return g.gz.Write(b) }
+
+// withGzip komprimiert API-Antworten (die Kartendaten sind sonst einige 100 KB groß).
+func withGzip(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/") || !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Add("Vary", "Accept-Encoding")
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		next.ServeHTTP(gzipWriter{ResponseWriter: w, gz: gz}, r)
+	})
+}
+
 func withLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -499,11 +546,16 @@ func env(key, def string) string {
 }
 
 func main() {
-	httpClient := &http.Client{Timeout: 25 * time.Second}
+	httpClient := &http.Client{Timeout: 40 * time.Second}
+	boundary, err := loadBoundary()
+	if err != nil {
+		log.Fatalf("Landesgrenze: %v", err)
+	}
 	s := &Server{
-		geo:   &GeoSphereClient{http: httpClient},
-		om:    &OpenMeteoClient{http: httpClient},
-		cache: NewCache(),
+		geo:      &GeoSphereClient{http: httpClient},
+		om:       &OpenMeteoClient{http: httpClient},
+		cache:    NewCache(),
+		boundary: boundary,
 	}
 
 	mux := http.NewServeMux()
@@ -512,6 +564,7 @@ func main() {
 	})
 	mux.HandleFunc("GET /api/stations", s.handleStations)
 	mux.HandleFunc("GET /api/stations/{id}/data", s.handleData)
+	mux.HandleFunc("GET /api/map", s.handleMap)
 
 	staticDir := env("STATIC_DIR", "../frontend/dist")
 	if st, err := os.Stat(filepath.Join(staticDir, "index.html")); err == nil && !st.IsDir() {
@@ -532,5 +585,5 @@ func main() {
 
 	addr := ":" + env("PORT", "8080")
 	log.Printf("API läuft auf http://localhost%s", addr)
-	log.Fatal(http.ListenAndServe(addr, withLogging(withCORS(mux))))
+	log.Fatal(http.ListenAndServe(addr, withLogging(withCORS(withGzip(mux)))))
 }
