@@ -1,0 +1,38 @@
+{
+  // Start per Klick: Terminal → Run Task… → „Schneehöhen: App starten“
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Schneehöhen: App starten",
+      "dependsOn": ["Schneehöhen: Backend", "Schneehöhen: Frontend"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    },
+    {
+      "label": "Schneehöhen: Backend",
+      "type": "shell",
+      "command": "go run .",
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "isBackground": true,
+      "presentation": { "group": "schnee", "panel": "dedicated" },
+      "problemMatcher": {
+        "owner": "go",
+        "pattern": { "regexp": "^__never__$" },
+        "background": { "activesBegin": true, "beginsPattern": ".", "endsPattern": "API läuft" }
+      }
+    },
+    {
+      "label": "Schneehöhen: Frontend",
+      "type": "shell",
+      "command": "npm install && npm run dev",
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "isBackground": true,
+      "presentation": { "group": "schnee", "panel": "dedicated" },
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": { "regexp": "^__never__$" },
+        "background": { "activesBegin": true, "beginsPattern": ".", "endsPattern": "Local:" }
+      }
+    }
+  ]
+}
